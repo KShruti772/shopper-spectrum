@@ -1,10 +1,50 @@
-pandas
-numpy
-scikit-learn
-matplotlib
-seaborn
-plotly
-streamlit
-xgboost
-lightgbm
-joblib
+# ============================================================================
+# SHOPPER SPECTRUM: PRODUCTION REQUIREMENTS
+# Exact versions for production deployment and reproducibility
+# ============================================================================
+
+# Core Data Science & ML Stack
+pandas==2.2.0
+numpy==1.24.3
+scikit-learn==1.3.2
+
+# Visualization & Dashboard
+streamlit==1.28.1
+plotly==5.17.0
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# ML Model Persistence & Utilities
+joblib==1.3.2
+pickle-safe==0.1.1
+
+# Optional: Advanced ML Models
+xgboost==2.0.3
+lightgbm==4.1.0
+
+# ============================================================================
+# PRODUCTION DEPENDENCIES
+# ============================================================================
+
+# Python version should be 3.8+ (specify in deployment)
+# Recommended: Python 3.10 or 3.11
+
+# ============================================================================
+# OPTIONAL: Development Dependencies (for local development only)
+# Uncomment if working locally with Jupyter notebooks
+# ============================================================================
+
+# For notebook support (if using .ipynb files)
+# jupyter==1.0.0
+# jupyterlab==4.0.9
+# notebook==7.0.6
+# ipython==8.18.1
+
+# ============================================================================
+# NOTES FOR DEPLOYMENT
+# ============================================================================
+# 1. All packages are pinned to exact versions for reproducibility
+# 2. Avoid using pip install --upgrade in production
+# 3. Test locally before deploying to Streamlit Cloud
+# 4. For Streamlit Cloud deployment, packages install automatically from this file
+# 5. Large files (datasets, models) should be cached using @st.cache_data/@st.cache_resource

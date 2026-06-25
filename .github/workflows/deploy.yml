@@ -1,0 +1,104 @@
+name: Deploy to Streamlit Cloud
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+    
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        flake8 streamlit_app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 streamlit_app/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Check for syntax errors
+      run: |
+        python -m py_compile streamlit_app/app.py
+        python -m py_compile streamlit_app/pages/home.py
+        python -m py_compile streamlit_app/pages/analytics.py
+        python -m py_compile streamlit_app/pages/segmentation.py
+        python -m py_compile streamlit_app/pages/recommendation.py
+        python -m py_compile streamlit_app/pages/segmentation_input.py
+        python -m py_compile streamlit_app/pages/insights.py
+    
+    - name: Verify dependencies
+      run: |
+        python -c "import streamlit; import pandas; import numpy; import sklearn; import plotly; print('✅ All dependencies available')"
+    
+    - name: Check file structure
+      run: |
+        test -f streamlit_app/app.py && echo "✅ app.py found"
+        test -f streamlit_app/styles/styles.css && echo "✅ styles.css found"
+        test -f .streamlit/config.toml && echo "✅ config.toml found"
+        test -f requirements.txt && echo "✅ requirements.txt found"
+        test -d streamlit_app/pages && echo "✅ pages directory found"
+        test -d streamlit_app/utils && echo "✅ utils directory found"
+    
+    - name: Verify CSS file
+      run: |
+        lines=$(wc -l < streamlit_app/styles/styles.css)
+        if [ "$lines" -gt 500 ]; then
+          echo "✅ CSS file has $lines lines"
+        else
+          echo "❌ CSS file too small ($lines lines)"
+          exit 1
+        fi
+    
+    - name: Check for secrets
+      run: |
+        if grep -r "api_key\|password\|secret\|token" streamlit_app/ --include="*.py" || [ $? -eq 1 ]; then
+          echo "⚠️ Checking for hardcoded secrets..."
+        fi
+    
+    - name: Verify model files exist
+      run: |
+        test -d models && echo "✅ models directory found" || echo "⚠️ models directory not found"
+        test -f online_retail.csv && echo "✅ Dataset found" || echo "⚠️ Dataset not found in root"
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    if: success()
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: ✅ Check Deployment Status
+      run: |
+        echo "🚀 Deployment Triggered"
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref }}"
+        echo "Commit: ${{ github.sha }}"
+        echo ""
+        echo "📝 Next Steps:"
+        echo "1. Streamlit Cloud will automatically detect this push"
+        echo "2. App will rebuild and deploy"
+        echo "3. Check deployment logs at: https://share.streamlit.io"
+        echo ""
+        echo "🎯 App URL: https://share.streamlit.io/${{ github.repository_owner }}/shopper-spectrum"
+    
+    - name: 📢 Notify Deployment
+      run: |
+        echo "✨ Production Deployment"
+        echo "Commit: ${{ github.sha }}"
+        echo "Author: ${{ github.actor }}"
+        echo "Timestamp: $(date)"

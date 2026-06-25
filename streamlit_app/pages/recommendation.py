@@ -1,125 +1,121 @@
 import streamlit as st
+import plotly.express as px
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from sklearn.metrics.pairwise import cosine_similarity
 
-from ..utils.recommender import ItemBasedRecommender
+from utils.helpers import log_error, show_error_message
+from utils.model_loader import find_dataset_path
+from utils.recommendation_engine import (
+    build_product_index,
+    compute_popular_products,
+    load_similarity_resource,
+    recommend_products,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_FILE = PROJECT_ROOT / "online_retail.csv"
-SIM_PATH = PROJECT_ROOT / "data" / "processed" / "product_similarity.csv"
+SIMILARITY_PATH = PROJECT_ROOT / "models" / "similarity_matrix.pkl"
+DATA_PATH = find_dataset_path()
 
 
-@st.cache_data(show_spinner=False)
-def load_transactions(path: Path) -> pd.DataFrame:
-    """Load cleaned transactions if available; fallback to raw CSV."""
-    try:
-        from utils.cleaning import clean_retail_data
-        _, df = clean_retail_data(str(path))
-        return df
-    except Exception:
-        try:
-            return pd.read_csv(path)
-        except UnicodeDecodeError:
-            return pd.read_csv(path, encoding="ISO-8859-1")
+def _render_header():
+    st.markdown("# Product Recommendation")
+    st.markdown("Get targeted product suggestions using purchase-behavior similarity.")
 
 
-@st.cache_data(show_spinner=False)
-def load_or_compute_similarity(df: pd.DataFrame, sim_path: Path) -> pd.DataFrame:
-    """Load a saved product-product similarity DataFrame or compute and save it.
+def _render_sidebar():
+    st.sidebar.header("Recommendation Controls")
+    st.sidebar.markdown("Search by product keyword. If exact matches are missing, the engine falls back to popular items.")
 
-    The saved format is CSV with product names as both index and columns.
-    """
-    sim_path.parent.mkdir(parents=True, exist_ok=True)
-    if sim_path.exists():
-        try:
-            sim_df = pd.read_csv(sim_path, index_col=0)
-            return sim_df
-        except Exception:
-            # corrupted file, compute anew
-            pass
 
-    # Build pivot and compute similarity
-    pivot = pd.pivot_table(df, index="CustomerID", columns="Description", values="Quantity", aggfunc="sum", fill_value=0)
-    product_matrix = pivot.T.values.astype(float)
-    sim_array = cosine_similarity(product_matrix)
-    product_names = list(pivot.columns)
-    sim_df = pd.DataFrame(sim_array, index=product_names, columns=product_names)
+def _render_search_controls():
+    query = st.text_input("🔍 Product name or keyword", placeholder="Example: white cotton shirt")
+    top_n = st.selectbox("How many recommendations", [3, 5, 7, 10], index=1)
+    submit = st.button("Recommend")
+    return query, top_n, submit
 
-    # Save to CSV for future fast loads
-    try:
-        sim_df.to_csv(sim_path)
-    except Exception:
-        # non-fatal if save fails (e.g., permission issues)
-        pass
 
-    return sim_df
+def _render_popular_products(df: pd.DataFrame):
+    popular = compute_popular_products(df, top_n=10)
+    if popular.empty:
+        st.info("No popularity metrics available.")
+        return
+    st.markdown("### Popular Products")
+    st.dataframe(popular, use_container_width=True)
+    fig = px.bar(popular, x="TotalQuantity", y="Description", orientation="h", title="Top Popular Products")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_recommendations(recommendations: pd.DataFrame, query: str):
+    if recommendations.empty:
+        st.warning("No recommendations available for this query.")
+        return
+    st.markdown(f"### Recommendations for '{query}'")
+    for idx, row in recommendations.iterrows():
+        similarity = float(row.get("similarity", 0.0))
+        confidence = float(row.get("confidence", 0.0))
+        with st.expander(f"{idx + 1}. {row['product']} ({similarity:.2%} similarity)"):
+            st.write(f"**Product:** {row['product']}")
+            st.write(f"**Similarity:** {similarity:.4f}")
+            st.write(f"**Confidence:** {confidence:.2%}")
+            st.write(f"**Popularity:** {int(row.get('popularity', 0))}")
+
+
+def _render_analytics(df: pd.DataFrame, recommendations: pd.DataFrame):
+    st.markdown("### Recommendation Analytics")
+    if not df.empty:
+        popular = compute_popular_products(df, top_n=8)
+        fig = px.pie(popular, values="TotalQuantity", names="Description", title="Product Popularity Distribution")
+        st.plotly_chart(fig, use_container_width=True)
+    if not recommendations.empty:
+        fig = px.bar(recommendations.head(5), x="product", y="similarity", title="Recommendation Similarity Scores")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def render():
-    st.title("Product Recommendation")
-    st.markdown("Find similar products using item-based collaborative filtering.")
+    _render_header()
+    _render_sidebar()
 
-    df = load_transactions(DATA_FILE)
-    st.sidebar.markdown(f"**Dataset:** {df.shape[0]:,} transactions — {df['Description'].nunique():,} products")
+    if DATA_PATH is None:
+        show_error_message("Retail dataset not found.", "Place the dataset in the project root or data/ folder and restart.")
+        return
 
-    # Input controls
-    product_input = st.text_input("Product name (partial or full)")
-    top_n = st.selectbox("Number of recommendations", options=[3,5,7,10], index=1)
+    try:
+        df = pd.read_csv(DATA_PATH, low_memory=False)
+    except Exception as exc:
+        log_error(exc, "Loading product dataset")
+        show_error_message("Could not load dataset.")
+        return
 
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("Enter a product name or keyword and click Recommend.")
-    with col2:
-        recommend_btn = st.button("Recommend")
+    query, top_n, submit = _render_search_controls()
+    if not submit:
+        _render_popular_products(df)
+        return
 
-    if recommend_btn:
-        if not product_input or str(product_input).strip() == "":
-            st.error("Please enter a product name to search for recommendations.")
-            return
+    if not query or not query.strip():
+        show_error_message("Please provide a product name or keyword.")
+        return
 
-        # Compute or load similarity matrix (cached)
-        with st.spinner("Preparing similarity matrix..."):
-            sim_df = load_or_compute_similarity(df, SIM_PATH)
+    try:
+        similar_matrix = load_similarity_resource(SIMILARITY_PATH)
+        product_index = build_product_index(similar_matrix)
+        recommendations = recommend_products(query, similar_matrix, product_index, top_n=top_n)
+    except FileNotFoundError:
+        st.warning("Similarity data not available. Serving fallback popular products.")
+        recommendations = compute_popular_products(df, top_n=top_n).rename(columns={"Description": "product"})
+    except Exception as exc:
+        log_error(exc, "Generating recommendations")
+        show_error_message("Recommendation generation failed.")
+        return
 
-        # Build recommender (fast) and compute recommendations
-        recommender = ItemBasedRecommender()
-        recommender.fit(df)
+    if recommendations.empty:
+        st.warning("No recommendations found. Try a broader keyword.")
+        return
 
-        try:
-            recs = recommender.recommend(product_input, top_n=top_n)
-        except Exception as e:
-            st.error(f"Error while finding matches: {e}")
-            return
+    _render_recommendations(recommendations, query)
+    _render_analytics(df, recommendations)
 
-        # If recommender returned popular_fallback, show info and display fallback
-        if not recs.empty and "reason" in recs.columns and recs.at[0, "reason"] == "popular_fallback":
-            st.info("No close product match found — showing popular products as fallback.")
-
-        if recs.empty:
-            st.warning("No recommendations available for this query.")
-            return
-
-        # Display recommendations with expanders/cards
-        st.markdown("### Top recommendations")
-        for i, row in recs.iterrows():
-            prod = row["product"]
-            sim = float(row.get("similarity", 0.0))
-            conf = float(row.get("confidence", 0.0))
-            pop = int(row.get("popularity", 0))
-
-            with st.expander(f"{i+1}. {prod} — Confidence: {conf:.2%}"):
-                st.markdown(f"**Similarity score:** {sim:.4f}")
-                st.markdown(f"**Confidence:** {conf:.2%}")
-                st.markdown(f"**Popularity (total quantity):** {pop}")
-                # Example action buttons
-                btn_col1, btn_col2 = st.columns([1, 2])
-                if btn_col1.button(f"View {i+1}", key=f"view_{i}"):
-                    st.info(f"You clicked to view product: {prod}")
-                if btn_col2.button(f"Add to promo list", key=f"promo_{i}"):
-                    st.success(f"{prod} added to promo list")
-
-        st.markdown("---")
-        st.markdown("Tip: Use partial keywords or product fragments; the system attempts fuzzy matching and falls back to popular items if no close match is found.")
-
+    with st.expander("How recommendations work"):
+        st.write(
+            "This module uses a precomputed similarity matrix to compare products from the retail catalog. "
+            "If the model resource is not available, it gracefully falls back to a popular-products list."
+        )

@@ -1,0 +1,28 @@
+# ============================================================================
+# STREAMLIT CONFIGURATION FOR SHOPPER SPECTRUM
+# ============================================================================
+
+[theme]
+primaryColor = "#5fd0ff"
+backgroundColor = "#071023"
+secondaryBackgroundColor = "#0d172f"
+textColor = "#eef2fc"
+font = "sans serif"
+
+[client]
+showSidebarNavigation = false
+toolbarMode = "viewer"
+showErrorDetails = false
+
+[server]
+maxMessageSize = 200
+enableXsrfProtection = true
+enableCORS = true
+
+[ui]
+hideTopBar = true
+hideFooterIndex = true
+
+[browser]
+gatherUsageStats = false
+
